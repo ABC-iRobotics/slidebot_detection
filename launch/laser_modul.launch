@@ -1,5 +1,0 @@
-<launch>  
-  <!-- Start the actual detection server -->
-  <node name="slide_detection_server" pkg="slide_detection" type="SlideDetectionServer.py" respawn="false" output="screen">
-  </node>
-</launch>

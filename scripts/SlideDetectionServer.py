@@ -8,6 +8,7 @@ from scipy.signal import lfilter
 from scipy.signal import argrelextrema
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Pose2D
+from matplotlib import pyplot as plt
 
 class SlideDetection:
     def __init__(self):
@@ -27,11 +28,15 @@ class SlideDetection:
         # crop the image
         Data = image[BB[0,1]:BB[1,1], BB[0,0]:BB[1,0]]
 
+
         # extract the actual beam region
         # intuition: middle third is the focus
         H = np.sum(Data, axis=0)
         MAXindex = int(len(H)/3) + np.argmax(H[int(len(H)/3):int(2*len(H)/3)])
         Beam = Data[:, (MAXindex-5):(MAXindex+5)]
+
+        # save the cropped images
+        
         return Beam
 
     def IsRealLocalMinimum(self, index, array, th_x, th_y):
@@ -42,6 +47,32 @@ class SlideDetection:
         else:
             return False
 
+    def FilterAndCorrect(self, points, array, th_x, th_y):
+        outPoints = []
+        for i in range(len(points)):
+            index = int(points[i])
+            ok = [False, False]
+            TH = array[index]+th_y
+            step = 0
+            LH = index
+            RH = index
+            while step<th_x and array[LH]<TH:
+                step+=1
+                LH-=1
+            if step<th_x:
+                ok[0] = True
+            
+            step = 0
+            while step<th_x and array[RH]<TH:
+                step+=1
+                RH+=1
+            if step<th_x:
+                ok[1] = True
+            if ok == [True, True]:
+                p_centered = int((LH+RH)/2)
+                outPoints.append(p_centered)
+        return outPoints
+
     def SegmentBeam(self, Beam):
 
         # transform beam rows intensity to signal wave, and filter it
@@ -51,26 +82,30 @@ class SlideDetection:
         a = 1
         FilteredIntensity = lfilter(b,a,BeamIntensity)
 
+
         # get the local minimums of the signal wave
         PossibleGlassPointsPool_0 = argrelextrema(FilteredIntensity, np.less)
-
+        # plt.plot(BeamIntensity)
+        # plt.vlines(PossibleGlassPointsPool_0, ymin=0, ymax=1000, colors='red')
+        # plt.title('talált minimumpontok')
+        # plt.show()
         # filter out too close minimum points
         PossibleGlassPointsPool_1 = np.zeros(len(PossibleGlassPointsPool_0[0]),)
         PoolIndex = 0
         for i in range(len(PossibleGlassPointsPool_0[0])-1):
-            if np.abs(np.subtract(PossibleGlassPointsPool_0[0][i], PossibleGlassPointsPool_0[0][i+1]))>10:
+            if np.abs(np.subtract(PossibleGlassPointsPool_0[0][i], PossibleGlassPointsPool_0[0][i+1]))<10:
+                v_i = FilteredIntensity[PossibleGlassPointsPool_0[0][i]]
+                v_ip = FilteredIntensity[PossibleGlassPointsPool_0[0][i+1]]
+                if v_ip>v_i:
+                    PossibleGlassPointsPool_1[PoolIndex] = PossibleGlassPointsPool_0[0][i]
+                    PoolIndex = PoolIndex+1
+            else:
                 PossibleGlassPointsPool_1[PoolIndex] = PossibleGlassPointsPool_0[0][i]
                 PoolIndex = PoolIndex+1
         PossibleGlassPointsPool_1 = PossibleGlassPointsPool_1[0:PoolIndex]
 
         # filter out not enough "deep" points
-        PossibleGlassPointsPool_2 = np.zeros(PoolIndex,)
-        PoolIndex = 0
-        for i in range(len(PossibleGlassPointsPool_1)):
-            if self.IsRealLocalMinimum(index=PossibleGlassPointsPool_1[i], array=FilteredIntensity, th_x = 10, th_y = 20):
-                PossibleGlassPointsPool_2[PoolIndex] = PossibleGlassPointsPool_1[i]
-                PoolIndex = PoolIndex+1
-        PossibleGlassPointsPool_2 = PossibleGlassPointsPool_2[0:PoolIndex]
+        PossibleGlassPointsPool_2 = self.FilterAndCorrect(PossibleGlassPointsPool_1, FilteredIntensity, 10, 20)
 
         return PossibleGlassPointsPool_2
 
@@ -124,12 +159,26 @@ class SlideDetection:
 
             # too short segment = not a real slide, too long = couldnt find the ned points
             D = Right-Left
-            if (D>400 and D<800):
+            if (D>0 and D<2000):
                 GlassEdges[GE_index,:,:] = ((Left, Y), (Right, Y))
                 GE_index = GE_index+1
 
         GlassEdges = GlassEdges[0:GE_index]
         return GlassEdges
+
+    def vis_slides(self, I_off, SlidCorners, SlidePoints, BB):
+        FullArray = np.array(I_off)
+        BoxArray = FullArray[BB[0,1]:BB[1,1], BB[0,0]:BB[1,0],:]
+        FinalImg = Image.fromarray(BoxArray)
+        img = ImageDraw.Draw(FinalImg)
+        for i in range(len(SlidCorners)):
+            img.line([SlidCorners[i][0][0], SlidCorners[i][0][1], SlidCorners[i][1][0], SlidCorners[i][1][1]], fill ="magenta", width =2)
+        
+        #   show the middle slide in red
+        #midIndex = int(len(SlidePoints)/2)
+
+        #img.line([SlidCorners[midIndex][0][0], SlidCorners[midIndex][0][1], SlidCorners[midIndex][1][0], SlidCorners[midIndex][1][1]], fill ="red", width =2)
+        FinalImg.show()
 
     def GetBB(self, detection_msg):
         cx = detection_msg.bbox.center.x
@@ -137,7 +186,7 @@ class SlideDetection:
         dx = int(detection_msg.bbox.size_x/2)
         dy = int(detection_msg.bbox.size_y/2)
 
-        BB = np.array([[(cx-dx), (cy-dy)],[(cx+dx), (cy+dy)]])
+        BB = np.array([[int(cx-dx), int(cy-dy)],[int(cx+dx), int(cy+dy)]])
         return BB
 
 
@@ -149,19 +198,30 @@ class SlideDetection:
         OFF = np.array(image_off)
         OFF = OFF[:,:,2]
         BB = self.GetBB(goal.bbox)
+
+        # save the cropped iamges
+        I_on = Image.fromarray(image_on[BB[0,1]:BB[1,1], BB[0,0]:BB[1,0],:])
+        I_on.save('/home/tirczkas/work/cap/on_1.png')
+        I_off = Image.fromarray(image_off[BB[0,1]:BB[1,1], BB[0,0]:BB[1,0],:])
+        I_off.save('/home/tirczkas/work/cap/off_1.png')
+        # save ned
+
         Beam = self.GetBeam(ON, OFF, BB)
         SlidePoints = self.SegmentBeam(Beam)
         SlideCorners = self.GetSlideCorners(SlidePoints, np.array(image_off), BB)
 
+        self.vis_slides(np.array(image_off), SlideCorners, SlidePoints, BB)
+
         result = SlideDetectionResult()
-        p = Pose2D()
         for i in range(len(SlideCorners)):
-            p_left = np.array(SlideCorners[i,0,0], SlideCorners[i,0,1])
-            p_right = np.array(SlideCorners[i,1,0], SlideCorners[i,1,1])
-            p.x  = p_left[0]+(p_left[0]+p_right[0])/2
-            p.y  = p_left[1]+(p_left[1]+p_right[1])/2
+            p = Pose2D()
+            p_left = np.array([SlideCorners[i,0,0], SlideCorners[i,0,1]])
+            p_right = np.array([SlideCorners[i,1,0], SlideCorners[i,1,1]])
+            p.x  = int((p_left[0]+p_right[0])/2) + BB[0, 0]
+            p.y  = int((p_left[1]+p_right[1])/2) + BB[0, 1]
             p.theta = 0
             result.poses.append(p)
+        
         self.server.set_succeeded(result)
 
 if __name__ == '__main__':

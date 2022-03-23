@@ -1,0 +1,5 @@
+<launch>  
+  <!-- Start the actual detection server -->
+  <node name="slide_detection_server" pkg="slidebot_detection" type="SlideDetectionServer.py" respawn="false" output="screen">
+  </node>
+</launch>
