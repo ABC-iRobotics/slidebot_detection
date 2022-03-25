@@ -1,3 +1,10 @@
+#! /usr/bin/env python
+
+## @package slidebot_detection
+# The ROS node for detecting glass slides on images
+#
+# Defines a ROS action server for detecting glass slides given a pair of images and a ROI
+
 import rospy
 import actionlib
 from bark_msgs.msg import SlideDetectionAction, SlideDetectionResult
@@ -10,12 +17,31 @@ from cv_bridge import CvBridge
 from geometry_msgs.msg import Pose2D
 from matplotlib import pyplot as plt
 
+
+## SlideDetection class
+#
+# Defines a ROS action server for detecting glass slides
 class SlideDetection:
+    '''
+        Class for glass slide predictions
+    '''
+
+    ## Constructor of SlideDetection class
+    # 
     def __init__(self):
+        ## @var bridge
+        #  CvBridge() object for conversions between numpy arrays and ROS Image message types
         self.bridge = CvBridge()
+
+        ## @var server
+        #  The ROS action server for the SlideDetectionAction action. The name of the action is "slide_detection"
         self.server = actionlib.SimpleActionServer('slide_detection', SlideDetectionAction, self.execute, False)
         self.server.start()
 
+    ## Get laser beam
+    # @param ON numpy array type image (only red channel (width x height x 1)) from image with laser turned on
+    # @param OFF numpy array type image (only red channel (width x height x 1)) from image with laser turned off
+    # @param BB numpy array type ROI description (form: [x_min, y_min, x_max, y_max])
     def GetBeam(self, ON, OFF, BB):
         image = np.subtract(ON,OFF)
 
@@ -39,14 +65,12 @@ class SlideDetection:
         
         return Beam
 
-    def IsRealLocalMinimum(self, index, array, th_x, th_y):
-        bef = array[int(index-th_x)]
-        aft = array[int(index+th_x)]
-        if (bef>array[int(index)]+th_y)&(aft>array[int(index)]+th_y):
-            return True
-        else:
-            return False
 
+    ## Filter and correct local minima
+    # @param points numpy array type possible minimum points
+    # @param array numpy array type filtered intensity array for the laser beam
+    # @param th_x integer type x threshold
+    # @param th_y integer type y threshold
     def FilterAndCorrect(self, points, array, th_x, th_y):
         outPoints = []
         for i in range(len(points)):
@@ -73,6 +97,9 @@ class SlideDetection:
                 outPoints.append(p_centered)
         return outPoints
 
+
+    ## Segment laser beam
+    # @param Beam result of GetBeam function
     def SegmentBeam(self, Beam):
 
         # transform beam rows intensity to signal wave, and filter it
@@ -109,6 +136,10 @@ class SlideDetection:
 
         return PossibleGlassPointsPool_2
 
+    ## Detect corners of the glass slides
+    # @param PossibleCorners result of SegmentBeam function
+    # @param OFF_BGR numpy array type image in BGR encoding (with the laser turned off)
+    # @param BB numpy array type ROI description (form: [x_min, y_min, x_max, y_max])
     def GetSlideCorners(self, PossibleCorners, OFF_BGR, BB):
 
         # create output container
@@ -166,6 +197,11 @@ class SlideDetection:
         GlassEdges = GlassEdges[0:GE_index]
         return GlassEdges
 
+    ## Visualize glass slide detection
+    # @param I_off numpy array type image in BGR encoding (with the laser turned off)
+    # @param SlidCorners result of GetSlideCorners function
+    # @param SlidePoints result of SegmentBeam function
+    # @param BB numpy array type ROI description (form: [x_min, y_min, x_max, y_max])
     def vis_slides(self, I_off, SlidCorners, SlidePoints, BB):
         FullArray = np.array(I_off)
         BoxArray = FullArray[BB[0,1]:BB[1,1], BB[0,0]:BB[1,0],:]
@@ -180,6 +216,8 @@ class SlideDetection:
         #img.line([SlidCorners[midIndex][0][0], SlidCorners[midIndex][0][1], SlidCorners[midIndex][1][0], SlidCorners[midIndex][1][1]], fill ="red", width =2)
         FinalImg.show()
 
+    ## Convert ROS Detection2D message to numpy array
+    # @param detection_msg vision_msgs/Detection2D type object containing the result of the bounding box detection
     def GetBB(self, detection_msg):
         cx = detection_msg.bbox.center.x
         cy = detection_msg.bbox.center.y
@@ -189,8 +227,15 @@ class SlideDetection:
         BB = np.array([[int(cx-dx), int(cy-dy)],[int(cx+dx), int(cy+dy)]])
         return BB
 
-
+    ## SlideDetectionAction callback
+    # This function gets called whenever the ROS action server receives a goal from a client
+    # @param goal bark_msgs/SlideDetectionGoal type action goal, it contains two images (with laser on and off) and the results of the bounding box prediction (ROI) (see action definition for further details)
     def execute(self, goal):
+        '''
+        SlideDetectionAction callback
+
+        goal: bark_msgs/SlideDetectionGoal, action goal, it contains two images (with laser on and off) and the results of the bounding box prediction (ROI) (see action definition for further details)
+        '''
         image_on = self.bridge.imgmsg_to_cv2(goal.image_on, "bgr8")
         image_off = self.bridge.imgmsg_to_cv2(goal.image_off, "bgr8")
         ON = np.array(image_on)
@@ -201,9 +246,9 @@ class SlideDetection:
 
         # save the cropped iamges
         I_on = Image.fromarray(image_on[BB[0,1]:BB[1,1], BB[0,0]:BB[1,0],:])
-        I_on.save('/home/tirczkas/work/cap/on_1.png')
+        I_on.save('/home/tirczkas/work/cap/on_1.png')  # TODO: Remove hard coded paths
         I_off = Image.fromarray(image_off[BB[0,1]:BB[1,1], BB[0,0]:BB[1,0],:])
-        I_off.save('/home/tirczkas/work/cap/off_1.png')
+        I_off.save('/home/tirczkas/work/cap/off_1.png')  # TODO: Remove hard coded paths
         # save ned
 
         Beam = self.GetBeam(ON, OFF, BB)
